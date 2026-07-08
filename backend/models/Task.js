@@ -1,0 +1,46 @@
+const mongoose = require('mongoose');
+
+const taskSchema = new mongoose.Schema({
+  memberId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Member', 
+    required: true 
+  },
+  standupId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Standup', 
+    required: true 
+  },
+  title: { 
+    type: String, 
+    required: true 
+  },
+  description: { 
+    type: String, 
+    default: null 
+  },
+  status: { 
+    type: String, 
+    required: true, 
+    enum: ['PROCESSING', 'COMPLETED', 'BLOCKED'], 
+    default: 'PROCESSING' 
+  },
+  workflowStage: { 
+    type: String, 
+    required: true, 
+    enum: ['DEVELOPMENT', 'QA', 'REVIEW', 'PRODUCTION'], 
+    default: 'DEVELOPMENT' 
+  },
+  priority: { 
+    type: String, 
+    required: true, 
+    enum: ['Low', 'Medium', 'High', 'Critical'], 
+    default: 'Medium' 
+  },
+  deadline: { 
+    type: Date, 
+    default: null 
+  }
+}, { timestamps: true });
+
+module.exports = mongoose.model('Task', taskSchema);
