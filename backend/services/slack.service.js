@@ -1,8 +1,15 @@
 import { WebClient } from "@slack/web-api";
-import dotenv from "dotenv";
+import SlackIntegration from "../models/slackIntegration.model.js";
 
-dotenv.config();
+export const getSlackClient = async () => {
 
-const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
+    const integration = await SlackIntegration.findOne({
+        connected: true
+    });
 
-export default slackClient;
+    if (!integration) {
+        throw new Error("Slack is not connected.");
+    }
+
+    return new WebClient(integration.accessToken);
+};
