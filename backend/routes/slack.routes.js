@@ -1,8 +1,11 @@
 import express from "express";
-import { getChannels } from "../controllers/slack.controller.js";
 
 const router = express.Router();
 
-router.get("/channels", getChannels);
+router.get("/install", (req, res) => {
+
+    res.send("Slack Install");
+
+});
 
 export default router;
