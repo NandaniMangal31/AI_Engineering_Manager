@@ -133,53 +133,99 @@ export const getChannelMessages = async (req, res) => {
       limit: 100,
     });
 
+    // Get Slack workspace information
+    const integration = await SlackIntegration.findOne({
+      connected: true,
+    });
+
+    // Get channel details
+    const channelInfo = await slack.conversations.info({
+      channel: channelId,
+    });
+
+    // Filter only normal user messages
     const userMessages = response.messages.filter((message) => {
-    return (
+      return (
         message.type === "message" &&
         !message.subtype &&
         message.user &&
         message.text
-    );
-});
-
-const parsedMessages = [];
-
-for (const message of userMessages) {
-
-    const userInfo = await slack.users.info({
-        user: message.user,
+      );
     });
 
-    parsedMessages.push({
-        userName:
-            userInfo.user.profile.display_name ||
-            userInfo.user.real_name,
+    const parsedMessages = [];
 
+    for (const message of userMessages) {
+      const userInfo = await slack.users.info({
+        user: message.user,
+      });
+
+      parsedMessages.push({
         slackUserId: message.user,
 
-        message: message.text,
+        userName:
+          userInfo.user.real_name ||
+          userInfo.user.profile.display_name,
 
-        timestamp:new Date(Number(message.ts) * 1000).toISOString(),
+        displayName:
+          userInfo.user.profile.display_name || null,
+
+        email:
+          userInfo.user.profile.email || null,
+
+        profileImage:
+          userInfo.user.profile.image_192 || null,
+
+        rawMessage: message.text,
+
+        timestamp: new Date(
+          Number(message.ts) * 1000
+        ).toISOString(),
+
+        slackTimestamp: message.ts,
+
+        threadTs: message.thread_ts || null,
+
+        replyCount: message.reply_count || 0,
+
+        channelId,
+
+        workspaceId: integration.teamId,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      workspace: {
+        workspaceId: integration.teamId,
+        workspaceName: integration.teamName,
+      },
+
+      channel: {
+        channelId,
+        channelName: channelInfo.channel.name,
+        isPrivate: channelInfo.channel.is_private,
+      },
+
+      metadata: {
+        source: "SLACK",
+        fetchedAt: new Date().toISOString(),
+        defaultPriority: "LOW",
+      },
+
+      messages: parsedMessages,
     });
-}
 
-
-
-return res.json({
-    success: true,
-    messages: parsedMessages,
-});
-
-
-   
   } catch (error) {
+
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: error.data?.error || error.message,
     });
+
   }
 };
-
 export const joinChannel = async (req, res) => {
     try {
 
