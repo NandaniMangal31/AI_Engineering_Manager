@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const dependencySchema = new mongoose.Schema({
   taskId: { 
@@ -18,4 +18,4 @@ const dependencySchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('Dependency', dependencySchema);
+export default mongoose.model('Dependency', dependencySchema);

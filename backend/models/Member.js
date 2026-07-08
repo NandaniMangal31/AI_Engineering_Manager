@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const memberSchema = new mongoose.Schema({
   name: { 
@@ -35,4 +35,4 @@ const memberSchema = new mongoose.Schema({
   }
 }, { timestamps: true }); // Automatically creates createdAt and updatedAt
 
-module.exports = mongoose.model('Member', memberSchema);
+export default mongoose.model('Member', memberSchema);

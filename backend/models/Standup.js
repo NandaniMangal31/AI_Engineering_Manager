@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const standupSchema = new mongoose.Schema({
   submittedBy: { 
@@ -28,4 +28,4 @@ const standupSchema = new mongoose.Schema({
   }
 }, { timestamps: { createdAt: true, updatedAt: false } }); // Only logs submission intake timestamp
 
-module.exports = mongoose.model('Standup', standupSchema);
+export default mongoose.model('Standup', standupSchema);
