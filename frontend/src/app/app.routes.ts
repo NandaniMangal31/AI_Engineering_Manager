@@ -4,24 +4,24 @@ export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
   {
     path: 'dashboard',
-    loadComponent: () => import('./features/dashboard/dashboard.component').then((m) => m.DashboardComponent),
-    title: 'Dashboard · TaskStream AI',
+    loadComponent: () => import('./pages/dashboard/dashboard.component').then((m) => m.DashboardComponent),
   },
   {
     path: 'tasks',
-    loadComponent: () => import('./features/tasks/tasks.component').then((m) => m.TasksComponent),
-    title: 'Tasks · TaskStream AI',
+    loadComponent: () => import('./pages/tasks/tasks.component').then((m) => m.TasksComponent),
   },
   {
     path: 'standup-summary',
     loadComponent: () =>
-      import('./features/standup-summary/standup-summary.component').then((m) => m.StandupSummaryComponent),
-    title: 'Stand-up Summary · TaskStream AI',
+      import('./pages/standup-summary/standup-summary.component').then((m) => m.StandupSummaryComponent),
   },
   {
     path: 'team',
-    loadComponent: () => import('./features/team/team.component').then((m) => m.TeamComponent),
-    title: 'Team · TaskStream AI',
+    loadComponent: () => import('./pages/team/team.component').then((m) => m.TeamComponent),
+  },
+  {
+    path: 'integrations',
+    loadComponent: () => import('./pages/integrations/integrations.component').then((m) => m.IntegrationsComponent),
   },
   { path: '**', redirectTo: 'dashboard' },
 ];

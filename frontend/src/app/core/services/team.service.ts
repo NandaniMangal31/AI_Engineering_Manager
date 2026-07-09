@@ -1,29 +1,23 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Team } from '../types';
-import { API_BASE_URL } from '../api.config';
+import { environment } from '../../../environments/environment';
+import { Team, ThroughputPoint } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
 export class TeamService {
   private http = inject(HttpClient);
-  private baseUrl = `${API_BASE_URL}/teams`;
+  private base = `${environment.apiUrl}/teams`;
 
-  /** GET /api/teams */
   getTeams(): Observable<Team[]> {
-    // TODO: Inject HttpClient and call Express API: GET /api/teams
-    return this.http.get<Team[]>(this.baseUrl);
+    return this.http.get<Team[]>(this.base);
   }
 
-  /** GET /api/teams/:id */
   getTeamById(id: string): Observable<Team> {
-    // TODO: Inject HttpClient and call Express API: GET /api/teams/:id
-    return this.http.get<Team>(`${this.baseUrl}/${id}`);
+    return this.http.get<Team>(`${this.base}/${id}`);
   }
 
-  /** POST /api/teams */
-  createTeam(payload: Partial<Team>): Observable<Team> {
-    // TODO: Inject HttpClient and call Express API: POST /api/teams
-    return this.http.post<Team>(this.baseUrl, payload);
+  getTeamThroughput(id: string): Observable<ThroughputPoint[]> {
+    return this.http.get<ThroughputPoint[]>(`${this.base}/${id}/throughput`);
   }
 }

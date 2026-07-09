@@ -5,9 +5,7 @@
   "projects": {
     "taskstream-ai-frontend": {
       "projectType": "application",
-      "schematics": {
-        "@schematics/angular:component": { "style": "css", "standalone": true }
-      },
+      "schematics": {},
       "root": "",
       "sourceRoot": "src",
       "prefix": "app",
@@ -46,7 +44,6 @@
             "production": { "buildTarget": "taskstream-ai-frontend:build:production" },
             "development": { "buildTarget": "taskstream-ai-frontend:build:development" }
           },
-           "options": { "proxyConfig": "proxy.conf.json" },
           "defaultConfiguration": "development"
         }
       }

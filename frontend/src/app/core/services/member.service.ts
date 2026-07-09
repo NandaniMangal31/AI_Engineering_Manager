@@ -1,44 +1,26 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Member } from '../types';
-import { API_BASE_URL } from '../api.config';
+import { environment } from '../../../environments/environment';
+import { Member, MemberStats } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
 export class MemberService {
   private http = inject(HttpClient);
-  private baseUrl = `${API_BASE_URL}/members`;
+  private base = `${environment.apiUrl}/members`;
 
-  /** GET /api/members?teamId=&isActive= */
-  getMembers(params?: { teamId?: string; isActive?: boolean }): Observable<Member[]> {
-    // TODO: Inject HttpClient and call Express API: GET /api/members
-    return this.http.get<Member[]>(this.baseUrl, { params: toHttpParams(params) });
+  getMembers(filter: { isActive?: boolean; teamId?: string } = {}): Observable<Member[]> {
+    let params = new HttpParams();
+    if (filter.isActive !== undefined) params = params.set('isActive', String(filter.isActive));
+    if (filter.teamId) params = params.set('teamId', filter.teamId);
+    return this.http.get<Member[]>(this.base, { params });
   }
 
-  /** GET /api/members/:id */
   getMemberById(id: string): Observable<Member> {
-    // TODO: Inject HttpClient and call Express API: GET /api/members/:id
-    return this.http.get<Member>(`${this.baseUrl}/${id}`);
+    return this.http.get<Member>(`${this.base}/${id}`);
   }
 
-  /** POST /api/members */
-  createMember(payload: Partial<Member>): Observable<Member> {
-    // TODO: Inject HttpClient and call Express API: POST /api/members
-    return this.http.post<Member>(this.baseUrl, payload);
+  getMemberStats(id: string): Observable<MemberStats> {
+    return this.http.get<MemberStats>(`${this.base}/${id}/stats`);
   }
-
-  /** PATCH /api/members/:id */
-  updateMember(id: string, payload: Partial<Member>): Observable<Member> {
-    // TODO: Inject HttpClient and call Express API: PATCH /api/members/:id
-    return this.http.patch<Member>(`${this.baseUrl}/${id}`, payload);
-  }
-}
-
-function toHttpParams<T extends object>(obj?: T) {
-  if (!obj) return undefined;
-  const clean: Record<string, string> = {};
-  Object.entries(obj).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) clean[k] = String(v);
-  });
-  return clean;
 }
