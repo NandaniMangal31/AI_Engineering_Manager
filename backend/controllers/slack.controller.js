@@ -1,100 +1,162 @@
-import { getSlackClient, processSlackData } from "../services/slack.service.js";
-import { parseStandupMessage } from "../services/parserService.js"; 
-import Task from "../models/Task.js";
-import Member from "../models/Member.js";
-import Standup from "../models/Standup.js";
+import { WebClient } from '@slack/web-api';
+import SlackIntegration from '../models/slackIntegration.model.js';
+import { getSlackClient, fetchChannelMessages } from '../services/slack.service.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
-export const getChannelMessages = async (req, res) => {
-    try {
-        const { channelId } = req.params;
-        
-        console.log("--- 🚀 NEW REQUEST STARTED ---");
+const { SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI } = process.env;
 
-        // ====================================================================
-        // STEP 1: YOUR EXISTING SLACK FETCH LOGIC GOES HERE
-        // (Keep however you were fetching the data from Slack previously)
-        // ====================================================================
-        const client = await getSlackClient();
-        // ... (your code to get history/channels) ...
+// ─────────────────────────────────────────────
+// GET /api/slack/install
+// Redirects the user to Slack's OAuth consent page.
+// ─────────────────────────────────────────────
+export const installSlack = (req, res) => {
+  const scopes = [
+    'channels:read',
+    'channels:history',
+    'channels:join',
+    'groups:read',
+    'groups:history',
+    'users:read',
+    'users:read.email',
+    'chat:write',
+  ].join(',');
 
-        // Make sure the final JSON you built is assigned to this variable:
-        const slackPayload = {
-            // This should be the exact object you showed me earlier containing:
-            // success, workspace, channel, metadata, and messages[]
-        };
+  const slackAuthUrl =
+    `https://slack.com/oauth/v2/authorize` +
+    `?client_id=${SLACK_CLIENT_ID}` +
+    `&scope=${scopes}` +
+    `&redirect_uri=${encodeURIComponent(SLACK_REDIRECT_URI)}`;
 
-        if (!slackPayload.messages || slackPayload.messages.length === 0) {
-            console.log("❌ ERROR: slackPayload is empty or undefined!");
-            return res.status(400).json({ error: "No messages found to process." });
-        }
+  res.redirect(slackAuthUrl);
+};
 
-        // ====================================================================
-        // STEP 2: DISTRIBUTE TO TEAMS, MEMBERS, AND STANDUPS COLLECTIONS
-        // ====================================================================
-        console.log("📦 1. Attempting to save Teams and Members...");
-        const result = await processSlackData(slackPayload);
-        console.log("✅ SUCCESS: Saved to Teams, Members, and Standup collections!");
+// ─────────────────────────────────────────────
+// GET /api/slack/oauth/callback
+// Slack sends the auth code here. Exchange it for an access token.
+// ─────────────────────────────────────────────
+export const slackOAuthCallback = async (req, res) => {
+  const { code, error } = req.query;
 
-        // ====================================================================
-        // STEP 3: GEMINI AI PARSING
-        // ====================================================================
-        console.log("🧠 2. Sending formatted text to Gemini...");
-        const extractedTasks = await parseStandupMessage(result.aiReadyText);
-        console.log(`✅ SUCCESS: Gemini parsed ${extractedTasks.length} tasks!`);
+  if (error || !code) {
+    return res.status(400).json({ error: error || 'No code received from Slack.' });
+  }
 
-        // ====================================================================
-        // STEP 4: SAVE TO TASKS COLLECTION
-        // ====================================================================
-        console.log("📝 3. Attempting to save to Tasks collection...");
-        const slackChannelName = slackPayload.channel?.channelName || "Unknown Channel";
-        const savedTasks = [];
+  try {
+    // Exchange code for access token
+    const client = new WebClient();
+    const oauthResult = await client.oauth.v2.access({
+      client_id: SLACK_CLIENT_ID,
+      client_secret: SLACK_CLIENT_SECRET,
+      code,
+      redirect_uri: SLACK_REDIRECT_URI,
+    });
 
-        for (const pt of extractedTasks) {
-            const member = await Member.findOne({ name: pt.owner });
-            
-            if (member) {
-                const latestStandup = await Standup.findOne({ submittedBy: member._id }).sort({ createdAt: -1 });
-
-                let mappedStatus = 'PROCESSING';
-                const aiStatus = (pt.status || '').toLowerCase();
-                if (aiStatus.includes('complet') || aiStatus.includes('done')) mappedStatus = 'COMPLETED';
-                if (aiStatus.includes('block') || aiStatus.includes('wait')) mappedStatus = 'BLOCKED';
-
-                let mappedPriority = 'Medium';
-                const aiPriority = (pt.priority || '').toLowerCase();
-                if (aiPriority.includes('high') || aiPriority.includes('urgent')) mappedPriority = 'High';
-                if (aiPriority.includes('critical')) mappedPriority = 'Critical';
-                if (aiPriority.includes('low')) mappedPriority = 'Low';
-
-                const newTask = await Task.create({
-                    memberId: member._id,
-                    standupId: latestStandup ? latestStandup._id : null,
-                    title: pt.taskName,
-                    status: mappedStatus,
-                    priority: mappedPriority,
-                    workflowStage: 'DEVELOPMENT',
-                    channelName: slackChannelName 
-                });
-
-                savedTasks.push(newTask);
-            } else {
-                console.log(`⚠️ Warning: Could not find Member matching name: ${pt.owner}. Skipping this task.`);
-            }
-        }
-        
-        console.log(`✅ SUCCESS: Saved ${savedTasks.length} tasks to the database!`);
-        console.log("--- 🎉 PIPELINE COMPLETE ---");
-
-        res.status(200).json({
-            success: true,
-            message: "Pipeline executed successfully.",
-            tasksSaved: savedTasks.length,
-            tasks: savedTasks
-        });
-
-    } catch (error) {
-        console.log("❌ FATAL CRASH IN PIPELINE ❌");
-        console.error(error); // This prints the EXACT reason for the failure
-        res.status(500).json({ error: "Failed to process data. Check the terminal for details." });
+    if (!oauthResult.ok) {
+      return res.status(400).json({ error: oauthResult.error });
     }
+
+    const { access_token, team, bot_user_id, scope } = oauthResult;
+
+    // Upsert integration record (one per Slack workspace)
+    await SlackIntegration.findOneAndUpdate(
+      { teamId: team.id },
+      {
+        teamId: team.id,
+        teamName: team.name,
+        accessToken: access_token,
+        botUserId: bot_user_id,
+        scope,
+        connected: true,
+      },
+      { new: true, upsert: true }
+    );
+
+    console.log(`✅ Slack connected for workspace: ${team.name}`);
+    res.status(200).json({
+      message: `Slack connected successfully for workspace: ${team.name}`,
+      workspace: team.name,
+    });
+  } catch (err) {
+    console.error('❌ Slack OAuth error:', err.message);
+    res.status(500).json({ error: 'Failed to complete Slack OAuth.' });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET /api/slack/channels
+// Returns a list of public channels the bot can see.
+// ─────────────────────────────────────────────
+export const getChannels = async (req, res) => {
+  try {
+    const client = await getSlackClient();
+    const result = await client.conversations.list({
+      types: 'public_channel,private_channel',
+      limit: 100,
+    });
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    const channels = result.channels.map((ch) => ({
+      id: ch.id,
+      name: ch.name,
+      isPrivate: ch.is_private,
+      isMember: ch.is_member,
+      memberCount: ch.num_members,
+    }));
+
+    res.status(200).json({ channels });
+  } catch (err) {
+    console.error('❌ getChannels error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET /api/slack/channels/:channelId/messages
+// Fetches real messages from a specific Slack channel.
+// ─────────────────────────────────────────────
+export const getChannelMessages = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+
+    const messages = await fetchChannelMessages(channelId, limit);
+
+    res.status(200).json({
+      channelId,
+      count: messages.length,
+      messages,
+    });
+  } catch (err) {
+    console.error('❌ getChannelMessages error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// POST /api/slack/channels/:channelId/join
+// Makes the bot join a channel so it can read messages.
+// ─────────────────────────────────────────────
+export const joinChannel = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const client = await getSlackClient();
+
+    const result = await client.conversations.join({ channel: channelId });
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.status(200).json({
+      message: `Bot joined channel: ${result.channel.name}`,
+      channel: { id: result.channel.id, name: result.channel.name },
+    });
+  } catch (err) {
+    console.error('❌ joinChannel error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 };

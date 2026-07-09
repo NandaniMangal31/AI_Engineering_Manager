@@ -1,40 +1,35 @@
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
 
-const slackIntegrationSchema = new mongoose.Schema(
-    {
-        accessToken: {
-            type: String,
-            required: true,
-        },
+/**
+ * Stores the Slack OAuth access token for a connected workspace.
+ * Only one active integration is expected at a time (connected: true).
+ */
+const slackIntegrationSchema = new mongoose.Schema({
+  teamId: {
+    type: String,
+    required: true,
+    unique: true,        // One record per Slack workspace
+  },
+  teamName: {
+    type: String,
+    default: null,
+  },
+  accessToken: {
+    type: String,
+    required: true,
+  },
+  botUserId: {
+    type: String,
+    default: null,
+  },
+  scope: {
+    type: String,
+    default: null,
+  },
+  connected: {
+    type: Boolean,
+    default: true,
+  },
+}, { timestamps: true });
 
-        botUserId: {
-            type: String,
-            required: true,
-        },
-
-        teamId: {
-            type: String,
-            required: true,
-        },
-
-        teamName: {
-            type: String,
-            required: true,
-        },
-
-        scope: {
-            type: String,
-            required: true,
-        },
-
-        connected: {
-            type: Boolean,
-            default: true,
-        },
-    },
-    {
-        timestamps: true,
-    }
-);
-
-export default mongoose.model("SlackIntegration", slackIntegrationSchema);
+export default mongoose.model('SlackIntegration', slackIntegrationSchema);
