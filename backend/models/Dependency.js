@@ -18,4 +18,4 @@ const dependencySchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('Dependency', dependencySchema);
+export default mongoose.model('Dependency', dependencySchema);

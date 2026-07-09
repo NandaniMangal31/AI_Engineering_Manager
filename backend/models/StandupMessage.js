@@ -22,4 +22,4 @@ const standupMessageSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('StandupMessage', standupMessageSchema);
+export default mongoose.model('StandupMessage', standupMessageSchema);
