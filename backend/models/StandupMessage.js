@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const standupMessageSchema = new mongoose.Schema({
   standupId: { 
