@@ -9,7 +9,7 @@ const taskSchema = new mongoose.Schema({
   standupId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Standup', 
-    required: true 
+    required: false
   },
   title: { 
     type: String, 

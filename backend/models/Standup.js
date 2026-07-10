@@ -4,7 +4,7 @@ const standupSchema = new mongoose.Schema({
   submittedBy: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Member', 
-    required: true 
+    required: false 
   },
   source: { 
     type: String, 

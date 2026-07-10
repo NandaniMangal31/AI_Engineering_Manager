@@ -29,14 +29,6 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
           <span class="dot"></span> Integrations
         </a>
       </nav>
-
-      <div class="footer">
-        <div class="avatar">AR</div>
-        <div>
-          <div class="name">Alex Rivera</div>
-          <div class="role">Engineering Lead</div>
-        </div>
-      </div>
     </aside>
   `,
   styles: [`

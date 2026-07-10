@@ -18,9 +18,7 @@ import { SlackService, SlackChannel } from '../../core/services/slack.service';
           <h3>Slack</h3>
           <p class="sub">Connect a workspace so daily stand-ups posted to a channel are pulled in and parsed automatically.</p>
         </div>
-        <a class="btn-primary" [href]="installUrl" target="_blank" rel="noopener">Connect Slack</a>
       </div>
-
       <div class="card">
         <div class="card-head">
           <h3>Channels</h3>

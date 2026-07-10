@@ -21,7 +21,12 @@ interface MemberRow extends Member {
   standalone: true,
   imports: [CommonModule, RouterLink, DatePipe, TopbarComponent],
   template: `
-    <app-topbar title="Dashboard" searchPlaceholder="Search tasks, teams, or summaries..."></app-topbar>
+ <app-topbar
+  title="Dashboard"
+  searchPlaceholder="Search tasks, teams, or summaries..."
+  [showSlackButton]="true"
+  (slackConnect)="connectSlack()">
+</app-topbar>
 
     <div class="page">
       <ng-container *ngIf="!loading; else loadingTpl">
@@ -247,5 +252,11 @@ export class DashboardComponent implements OnInit {
         this.members = rows;
         this.loading = false;
       });
+  }
+  connectSlack(): void {
+    window.open(
+      'http://localhost:5000/api/slack/install',
+      '_blank'
+    );
   }
 }

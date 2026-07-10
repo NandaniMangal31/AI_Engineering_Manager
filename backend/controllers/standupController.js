@@ -48,39 +48,85 @@ export const processStandup = async (req, res) => {
         const createdTasks = [];
 
         // Step 3: Process tasks and create members dynamically
-        for (const pt of parsedTasks) {
+        const seen = new Set();
+
+        const uniqueTasks = parsedTasks.filter((task) => {
+            const key = `${(task.owner || "").trim().toLowerCase()}-${(task.taskName || "").trim().toLowerCase()}`;
+
+            if (seen.has(key)) {
+                return false;
+            }
+
+            seen.add(key);
+            return true;
+        });
+
+        // Process only unique tasks
+        for (const pt of uniqueTasks) {
+
             let memberName = pt.owner;
+
             if (!memberName || memberName.trim() === "") {
                 memberName = "Unknown";
             }
 
-            let member = await Member.findOne({ name: new RegExp(`^${memberName}$`, "i") });
+            let member = await Member.findOne({
+                name: new RegExp(`^${memberName}$`, "i")
+            });
+
             if (!member) {
                 member = await Member.create({
                     name: memberName,
-                    email: `${memberName.toLowerCase().replace(/\s+/g, '.')}@placeholder.slack`,
-                    role: 'Developer',
-                    isActive: true
+                    email: `${memberName.toLowerCase().replace(/\s+/g, ".")}@placeholder.slack`,
+                    role: "Developer",
+                    isActive: true,
                 });
             }
 
-            await StandupMessage.create({
+            // Avoid creating duplicate StandupMessage
+            const existingMessage = await StandupMessage.findOne({
                 standupId: standupRecord._id,
                 memberId: member._id,
                 rawMessage: rawText,
-                parsed: true,
             });
 
-            if (pt.taskName && pt.taskName.trim() !== "") {
-                const task = await Task.create({
-                    memberId: member._id,
+            if (!existingMessage) {
+                await StandupMessage.create({
                     standupId: standupRecord._id,
-                    title: pt.taskName,
-                    description: pt.blockerDescription || null,
-                    status: pt.status === "COMPLETED" ? "COMPLETED" : (pt.status === "BLOCKED" ? "BLOCKED" : "PROCESSING"),
-                    priority: pt.priority || "Medium",
-                    workflowStage: pt.workflowStage || "DEVELOPMENT",
+                    memberId: member._id,
+                    rawMessage: rawText,
+                    parsed: true,
                 });
+            }
+
+            if (pt.taskName && pt.taskName.trim() !== "") {
+
+                const task = await Task.findOneAndUpdate(
+                    {
+                        standupId: standupRecord._id,
+                        memberId: member._id,
+                        title: pt.taskName.trim(),
+                    },
+                    {
+                        $set: {
+                            description: pt.blockerDescription || null,
+                            status:
+                                pt.status === "COMPLETED"
+                                    ? "COMPLETED"
+                                    : pt.status === "BLOCKED"
+                                        ? "BLOCKED"
+                                        : "PROCESSING",
+                            priority: pt.priority || "Medium",
+                            workflowStage: pt.workflowStage || "DEVELOPMENT",
+                        },
+                    },
+                    {
+                        upsert: true,
+                        new: true,
+                        setDefaultsOnInsert: true,
+                    }
+                );
+
                 createdTasks.push(task);
             }
         }
