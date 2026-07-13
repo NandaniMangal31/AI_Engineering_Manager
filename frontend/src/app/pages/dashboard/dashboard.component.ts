@@ -254,9 +254,6 @@ export class DashboardComponent implements OnInit {
       });
   }
   connectSlack(): void {
-    window.open(
-      'http://localhost:5000/api/slack/install',
-      '_blank'
-    );
+    window.open('/api/slack/install', '_blank');
   }
 }
