@@ -1,7 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-
+import cors from 'cors'
 import taskRoutes from './routes/task.routes.js';
 import memberRoutes from './routes/member.routes.js';
 import teamRoutes from './routes/team.routes.js';
@@ -13,6 +13,9 @@ import dashboardRoutes from './routes/dashboard.routes.js'; // ← the new one
 dotenv.config();
 const app = express();
 app.use(express.json());
+app.use(cors({
+    origin:'http://localhost:4200'
+}))
 
 app.use('/api/tasks', taskRoutes);
 app.use('/api/members', memberRoutes);

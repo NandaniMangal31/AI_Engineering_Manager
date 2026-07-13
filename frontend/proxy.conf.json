@@ -1,6 +1,6 @@
 {
   "/api": {
-    "target": "http://localhost:5000",
+    "target": " https://ai-engineering-manager-yxtx.onrender.com",
     "secure": false,
     "changeOrigin": true,
     "logLevel": "debug"
