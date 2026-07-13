@@ -7,18 +7,45 @@ import StandupMessage from '../models/StandupMessage.js';
 import Task from '../models/Task.js';
 import Activity from '../models/Activity.js';
 
+export const selectSlackToken = (integration, botToken) => {
+  return integration?.accessToken || botToken || null;
+};
+
+export const ensureSlackIntegrationSeed = async () => {
+  const existingIntegration = await SlackIntegration.findOne({ connected: true });
+  if (existingIntegration?.accessToken) {
+    return existingIntegration;
+  }
+
+  if (!process.env.SLACK_BOT_TOKEN) {
+    return null;
+  }
+
+  return SlackIntegration.findOneAndUpdate(
+    { teamId: 'env-bot-token' },
+    {
+      teamId: 'env-bot-token',
+      teamName: 'Environment Bot Token',
+      accessToken: process.env.SLACK_BOT_TOKEN,
+      connected: true,
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+};
+
 // ─────────────────────────────────────────────
 // Helper: get an authenticated Slack WebClient
 // ─────────────────────────────────────────────
 export const getSlackClient = async () => {
-  const integration = await SlackIntegration.findOne({ connected: true });
+  const integration = await ensureSlackIntegrationSeed();
+  const token = selectSlackToken(integration, process.env.SLACK_BOT_TOKEN);
 
-  if (integration?.accessToken) {
-    return new WebClient(integration.accessToken);
-  }
-
-  if (process.env.SLACK_BOT_TOKEN) {
-    return new WebClient(process.env.SLACK_BOT_TOKEN);
+  if (token) {
+    return new WebClient(token);
   }
 
   throw new Error('Slack is not connected. Please complete the OAuth flow at /api/slack/install');
