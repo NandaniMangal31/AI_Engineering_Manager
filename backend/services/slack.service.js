@@ -12,10 +12,16 @@ import Activity from '../models/Activity.js';
 // ─────────────────────────────────────────────
 export const getSlackClient = async () => {
   const integration = await SlackIntegration.findOne({ connected: true });
-  if (!integration) {
-    throw new Error('Slack is not connected. Please complete the OAuth flow at /api/slack/install');
+
+  if (integration?.accessToken) {
+    return new WebClient(integration.accessToken);
   }
-  return new WebClient(integration.accessToken);
+
+  if (process.env.SLACK_BOT_TOKEN) {
+    return new WebClient(process.env.SLACK_BOT_TOKEN);
+  }
+
+  throw new Error('Slack is not connected. Please complete the OAuth flow at /api/slack/install');
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -4,7 +4,21 @@ import { getSlackClient, fetchChannelMessages } from '../services/slack.service.
 import dotenv from 'dotenv';
 dotenv.config();
 
-const { SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI } = process.env;
+const { SLACK_CLIENT_ID, SLACK_CLIENT_SECRET } = process.env;
+
+export const resolveSlackRedirectUri = (req) => {
+  const configuredRedirect = process.env.SLACK_REDIRECT_URI;
+  const forwardedProto = req.get?.('x-forwarded-proto') || req.protocol || 'http';
+  const forwardedHost = req.get?.('x-forwarded-host') || req.get?.('host');
+
+  if (configuredRedirect && forwardedHost && !forwardedHost.includes('localhost') && !forwardedHost.includes('127.0.0.1')) {
+    return configuredRedirect;
+  }
+
+  const protocol = forwardedProto.split(',')[0].trim();
+  const host = forwardedHost || 'localhost:5000';
+  return `${protocol}://${host}/api/slack/oauth/callback`;
+};
 
 // ─────────────────────────────────────────────
 // GET /api/slack/install
@@ -22,11 +36,12 @@ export const installSlack = (req, res) => {
     'chat:write',
   ].join(',');
 
+  const redirectUri = resolveSlackRedirectUri(req);
   const slackAuthUrl =
     `https://slack.com/oauth/v2/authorize` +
     `?client_id=${SLACK_CLIENT_ID}` +
     `&scope=${scopes}` +
-    `&redirect_uri=${encodeURIComponent(SLACK_REDIRECT_URI)}`;
+    `&redirect_uri=${encodeURIComponent(redirectUri)}`;
 
   res.redirect(slackAuthUrl);
 };
@@ -36,6 +51,8 @@ export const installSlack = (req, res) => {
 // Slack sends the auth code here. Exchange it for an access token.
 // ─────────────────────────────────────────────
 export const slackOAuthCallback = async (req, res) => {
+
+  console.log("===== OAuth Callback Started =====");
   const { code, error } = req.query;
 
   if (error || !code) {
@@ -43,13 +60,15 @@ export const slackOAuthCallback = async (req, res) => {
   }
 
   try {
+    const redirectUri = resolveSlackRedirectUri(req);
+
     // Exchange code for access token
     const client = new WebClient();
     const oauthResult = await client.oauth.v2.access({
       client_id: SLACK_CLIENT_ID,
       client_secret: SLACK_CLIENT_SECRET,
       code,
-      redirect_uri: SLACK_REDIRECT_URI,
+      redirect_uri: redirectUri,
     });
 
     if (!oauthResult.ok) {
@@ -57,20 +76,41 @@ export const slackOAuthCallback = async (req, res) => {
     }
 
     const { access_token, team, bot_user_id, scope } = oauthResult;
+    console.log("Access Token:", access_token ? "Received" : "Missing");
+console.log("Team:", team);
 
+const integration = await SlackIntegration.findOneAndUpdate(
+  { teamId: team.id },
+  {
+    teamId: team.id,
+    teamName: team.name,
+    accessToken: access_token,
+    botUserId: bot_user_id,
+    scope,
+    connected: true,
+  },
+  {
+    new: true,
+    upsert: true,
+  }
+);
+
+console.log("Saved Integration:", integration);
     // Upsert integration record (one per Slack workspace)
-    await SlackIntegration.findOneAndUpdate(
-      { teamId: team.id },
-      {
-        teamId: team.id,
-        teamName: team.name,
-        accessToken: access_token,
-        botUserId: bot_user_id,
-        scope,
-        connected: true,
-      },
-      { new: true, upsert: true }
-    );
+    // await SlackIntegration.findOneAndUpdate(
+    //   { teamId: team.id },
+    //   {
+    //     teamId: team.id,
+    //     teamName: team.name,
+    //     accessToken: access_token,
+    //     botUserId: bot_user_id,
+    //     scope,
+    //     connected: true,
+    //   },
+    //   { new: true, upsert: true }
+    // );
+    // const integration = await SlackIntegration.findOne({ teamId: team.id });
+    // console.log("Saved Integration:", integration);
 
     console.log(`✅ Slack connected for workspace: ${team.name}`);
     res.status(200).json({
