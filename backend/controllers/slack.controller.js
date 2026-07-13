@@ -1,7 +1,8 @@
-import { WebClient } from '@slack/web-api';
+﻿import { WebClient } from '@slack/web-api';
 import SlackIntegration from '../models/slackIntegration.model.js';
 import { getSlackClient, fetchChannelMessages } from '../services/slack.service.js';
 import dotenv from 'dotenv';
+
 dotenv.config();
 
 const { SLACK_CLIENT_ID, SLACK_CLIENT_SECRET } = process.env;
@@ -20,10 +21,6 @@ export const resolveSlackRedirectUri = (req) => {
   return `${protocol}://${host}/api/slack/oauth/callback`;
 };
 
-// ─────────────────────────────────────────────
-// GET /api/slack/install
-// Redirects the user to Slack's OAuth consent page.
-// ─────────────────────────────────────────────
 export const installSlack = (req, res) => {
   const scopes = [
     'channels:read',
@@ -38,7 +35,7 @@ export const installSlack = (req, res) => {
 
   const redirectUri = resolveSlackRedirectUri(req);
   const slackAuthUrl =
-    `https://slack.com/oauth/v2/authorize` +
+    'https://slack.com/oauth/v2/authorize' +
     `?client_id=${SLACK_CLIENT_ID}` +
     `&scope=${scopes}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}`;
@@ -46,13 +43,8 @@ export const installSlack = (req, res) => {
   res.redirect(slackAuthUrl);
 };
 
-// ─────────────────────────────────────────────
-// GET /api/slack/oauth/callback
-// Slack sends the auth code here. Exchange it for an access token.
-// ─────────────────────────────────────────────
 export const slackOAuthCallback = async (req, res) => {
-
-  console.log("===== OAuth Callback Started =====");
+  console.log('===== OAuth Callback Started =====');
   const { code, error } = req.query;
 
   if (error || !code) {
@@ -61,8 +53,6 @@ export const slackOAuthCallback = async (req, res) => {
 
   try {
     const redirectUri = resolveSlackRedirectUri(req);
-
-    // Exchange code for access token
     const client = new WebClient();
     const oauthResult = await client.oauth.v2.access({
       client_id: SLACK_CLIENT_ID,
@@ -76,46 +66,27 @@ export const slackOAuthCallback = async (req, res) => {
     }
 
     const { access_token, team, bot_user_id, scope } = oauthResult;
-    console.log("Access Token:", access_token ? "Received" : "Missing");
-console.log("Team:", team);
+    const workspaceId = team?.id || oauthResult.team_id || 'unknown-workspace';
+    const workspaceName = team?.name || oauthResult.team?.name || 'Slack Workspace';
 
-const integration = await SlackIntegration.findOneAndUpdate(
-  { teamId: team.id },
-  {
-    teamId: team.id,
-    teamName: team.name,
-    accessToken: access_token,
-    botUserId: bot_user_id,
-    scope,
-    connected: true,
-  },
-  {
-    new: true,
-    upsert: true,
-  }
-);
+    await SlackIntegration.findOneAndUpdate(
+      { teamId: workspaceId },
+      {
+        teamId: workspaceId,
+        teamName: workspaceName,
+        accessToken: access_token,
+        botUserId: bot_user_id,
+        scope,
+        connected: true,
+      },
+      { new: true, upsert: true }
+    );
 
-console.log("Saved Integration:", integration);
-    // Upsert integration record (one per Slack workspace)
-    // await SlackIntegration.findOneAndUpdate(
-    //   { teamId: team.id },
-    //   {
-    //     teamId: team.id,
-    //     teamName: team.name,
-    //     accessToken: access_token,
-    //     botUserId: bot_user_id,
-    //     scope,
-    //     connected: true,
-    //   },
-    //   { new: true, upsert: true }
-    // );
-    // const integration = await SlackIntegration.findOne({ teamId: team.id });
-    // console.log("Saved Integration:", integration);
+    console.log(`✅ Slack connected for workspace: ${workspaceName}`);
 
-    console.log(`✅ Slack connected for workspace: ${team.name}`);
     res.status(200).json({
-      message: `Slack connected successfully for workspace: ${team.name}`,
-      workspace: team.name,
+      message: `Slack connected successfully for workspace: ${workspaceName}`,
+      workspace: workspaceName,
     });
   } catch (err) {
     console.error('❌ Slack OAuth error:', err.message);
@@ -123,10 +94,6 @@ console.log("Saved Integration:", integration);
   }
 };
 
-// ─────────────────────────────────────────────
-// GET /api/slack/channels
-// Returns a list of public channels the bot can see.
-// ─────────────────────────────────────────────
 export const getChannels = async (req, res) => {
   try {
     const client = await getSlackClient();
@@ -154,10 +121,6 @@ export const getChannels = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────
-// GET /api/slack/channels/:channelId/messages
-// Fetches real messages from a specific Slack channel.
-// ─────────────────────────────────────────────
 export const getChannelMessages = async (req, res) => {
   try {
     const { channelId } = req.params;
@@ -176,10 +139,6 @@ export const getChannelMessages = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────
-// POST /api/slack/channels/:channelId/join
-// Makes the bot join a channel so it can read messages.
-// ─────────────────────────────────────────────
 export const joinChannel = async (req, res) => {
   try {
     const { channelId } = req.params;
