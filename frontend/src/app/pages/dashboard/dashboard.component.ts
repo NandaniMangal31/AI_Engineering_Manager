@@ -254,6 +254,6 @@ export class DashboardComponent implements OnInit {
       });
   }
   connectSlack(): void {
-    window.open('/api/slack/install', '_blank');
+    window.open('https://ai-engineering-manager-yxtx.onrender.com/api/slack/install', '_blank');
   }
 }
