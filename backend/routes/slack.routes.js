@@ -7,7 +7,7 @@ import {
   joinChannel,
 } from '../controllers/slack.controller.js';
 import { processSlackData, fetchChannelMessages, saveParsedTasksToDatabase } from '../services/slack.service.js';
-import { parseStandupMessage } from '../services/parserService.js';
+import { parseStandupMessage } from '../services/parser.service.js';
 import { getSlackClient } from '../services/slack.service.js';
 
 const router = express.Router();
