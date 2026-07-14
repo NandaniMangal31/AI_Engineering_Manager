@@ -79,7 +79,6 @@ const standupMessageSchema = new mongoose.Schema(
     slackTimestamp: {
       type: String,
       default: null,
-      index: true,
     },
 
     parsed: {

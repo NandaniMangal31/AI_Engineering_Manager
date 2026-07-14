@@ -122,6 +122,9 @@ IMPORTANT CONTEXT RULES:
 
 - The Slack message provides the main context and instruction.
 - An attached PDF or image may provide additional details about the work.
+- You MUST analyze every provided attachment before generating tasks.
+- If an attachment is provided, use its actual content together with the Slack message.
+- Do not ignore an attachment merely because the Slack message already contains text.
 - Do not automatically convert every sentence inside an attachment into a separate task.
 - Use the attachment to understand what the Slack message is asking the team member to do.
 - Ignore greetings, casual conversation, attendance notes, and unrelated content.
@@ -156,11 +159,14 @@ BLOCKER RULE:
 TASK TITLE RULE:
 - Generate a concise task title.
 - Preserve the actual meaning of the Slack instruction.
-- Use attachment content only when necessary to make the task more specific.
+- Use attachment content when it provides details needed to make the task more accurate or specific.
 
 Slack context:
 
-${hasText ? rawText : 'No text message was provided. Analyze the attachment using the available member context.'}
+${hasText
+  ? rawText
+  : 'No text message was provided. Analyze the attachment using the available member context.'
+}
 `;
 
   try {
