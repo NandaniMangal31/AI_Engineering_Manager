@@ -1,80 +1,189 @@
 import { GoogleGenAI } from '@google/genai';
+import fs from 'fs/promises';
 import dotenv from 'dotenv';
+
 dotenv.config();
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
 
-/**
- * Schema that Gemini must conform to when returning parsed tasks.
- * Maps onto our Task model fields as closely as possible.
- */
 const taskSchema = {
   type: 'array',
-  description: 'List of tasks extracted from the stand-up message.',
+  description: 'List of tasks extracted from Slack stand-up messages and attachments.',
+
   items: {
     type: 'object',
+
     properties: {
       owner: {
         type: 'string',
-        description: "Team member name who owns this task. Default to 'Unknown' if not found.",
+        description:
+          "Team member who owns this task. Must match exactly the 'Member:' name from the Slack message context.",
       },
+
       taskName: {
         type: 'string',
-        description: 'The specific task being worked on. Ignore headings and attendance notes.',
+        description:
+          'A concise and specific task title extracted from the Slack message and/or its attachments.',
       },
+
       status: {
         type: 'string',
         description:
-          "One of: 'PROCESSING' (in progress), 'COMPLETED' (done), 'BLOCKED' (blocked by something). Defaults to 'PROCESSING'.",
+          "One of: 'PROCESSING', 'COMPLETED', 'BLOCKED'. Default to 'PROCESSING'.",
       },
+
       priority: {
         type: 'string',
         description:
-          "One of: 'Low', 'Medium', 'High', 'Critical'. Infer from urgency words. Default to 'Medium'.",
+          "One of: 'Low', 'Medium', 'High', 'Critical'. Infer only when urgency is clear. Default to 'Low'.",
       },
+
       workflowStage: {
         type: 'string',
         description:
-          "One of: 'DEVELOPMENT', 'QA', 'REVIEW', 'PRODUCTION'. Infer from context. Default to 'DEVELOPMENT'.",
+          "One of: 'DEVELOPMENT', 'QA', 'REVIEW', 'PRODUCTION'. Default to 'DEVELOPMENT'.",
       },
+
       blockerDescription: {
         type: 'string',
-        description: 'If the task is BLOCKED, describe what is blocking it. Otherwise null.',
+        nullable: true,
+        description:
+          'Describe the blocker only when status is BLOCKED. Otherwise return null.',
       },
     },
-    required: ['owner', 'taskName', 'status', 'priority', 'workflowStage'],
+
+    required: [
+      'owner',
+      'taskName',
+      'status',
+      'priority',
+      'workflowStage',
+    ],
   },
 };
 
 /**
- * Sends raw standup text to Gemini and returns an array of structured tasks.
- * @param {string} rawText - The compiled standup messages (member + message pairs)
- * @returns {Promise<Array>} Array of parsed task objects
+ * Converts a downloaded local file into Gemini inline data.
  */
-export async function parseStandupMessage(rawText) {
-  if (!rawText || rawText.trim() === '') {
-    throw new Error('No standup text provided for parsing.');
+async function createGeminiFilePart(file) {
+  if (!file?.localPath) {
+    throw new Error('Downloaded file localPath is missing.');
+  }
+
+  const fileBuffer = await fs.readFile(file.localPath);
+
+  return {
+    inlineData: {
+      mimeType:
+        file.mimeType ||
+        'application/octet-stream',
+
+      data: fileBuffer.toString('base64'),
+    },
+  };
+}
+
+/**
+ * Parses Slack stand-up text and optional downloaded attachments.
+ *
+ * Supports:
+ * - Text only
+ * - Text + PDF
+ * - Text + image
+ * - PDF only
+ * - Image only
+ */
+export async function parseStandupMessage(
+  rawText,
+  downloadedFiles = []
+) {
+  const hasText =
+    typeof rawText === 'string' &&
+    rawText.trim() !== '';
+
+  const hasFiles =
+    Array.isArray(downloadedFiles) &&
+    downloadedFiles.length > 0;
+
+  if (!hasText && !hasFiles) {
+    throw new Error(
+      'No standup text or attachment provided for parsing.'
+    );
   }
 
   const prompt = `
-You are a scrum master AI. Parse the following daily stand-up messages and extract every individual task mentioned.
+You are an AI engineering manager and scrum master.
 
-Rules:
-- Each task should be a separate item in the array.
-- Map status words: "done"/"finished"/"completed" → COMPLETED, "blocked"/"waiting"/"stuck" → BLOCKED, everything else → PROCESSING.
-- Map priority: "urgent"/"critical"/"production" → Critical or High, "low priority" → Low, default → Medium.
-- Map stage: "qa"/"testing" → QA, "review"/"PR" → REVIEW, "prod"/"deploy"/"release" → PRODUCTION, default → DEVELOPMENT.
-- Ignore greetings, attendance, and headings.
-- The "owner" field should match exactly the "Member:" name in the message.
+Your job is to analyze Slack messages and their attached files, then extract actionable engineering tasks.
 
-Stand-up messages:
-${rawText}
+IMPORTANT CONTEXT RULES:
+
+- The Slack message provides the main context and instruction.
+- An attached PDF or image may provide additional details about the work.
+- Do not automatically convert every sentence inside an attachment into a separate task.
+- Use the attachment to understand what the Slack message is asking the team member to do.
+- Ignore greetings, casual conversation, attendance notes, and unrelated content.
+- Each genuinely distinct actionable task should be a separate array item.
+
+OWNER RULE:
+- The "owner" must exactly match the "Member:" name from the Slack message context.
+- Never infer another owner from names appearing inside an attachment unless the Slack message explicitly assigns the task to them.
+
+STATUS RULE:
+- "done", "finished", "completed" → COMPLETED
+- "blocked", "waiting", "stuck" → BLOCKED
+- Otherwise → PROCESSING
+
+PRIORITY RULE:
+- Explicit critical emergency → Critical
+- Explicit urgent/high priority → High
+- Explicit medium priority → Medium
+- Explicit low priority → Low
+- If no priority is mentioned → Low
+
+WORKFLOW STAGE RULE:
+- QA/testing → QA
+- review/PR/code review → REVIEW
+- production/deploy/release → PRODUCTION
+- Otherwise → DEVELOPMENT
+
+BLOCKER RULE:
+- If status is BLOCKED, explain the blocker in blockerDescription.
+- Otherwise blockerDescription should be null.
+
+TASK TITLE RULE:
+- Generate a concise task title.
+- Preserve the actual meaning of the Slack instruction.
+- Use attachment content only when necessary to make the task more specific.
+
+Slack context:
+
+${hasText ? rawText : 'No text message was provided. Analyze the attachment using the available member context.'}
 `;
 
   try {
+    const contents = [
+      {
+        text: prompt,
+      },
+    ];
+
+    for (const file of downloadedFiles) {
+      const filePart = await createGeminiFilePart(file);
+      contents.push(filePart);
+    }
+
+    console.log(
+      `🤖 Sending standup to Gemini with ${downloadedFiles.length} attachment(s).`
+    );
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt,
+
+      contents,
+
       config: {
         responseMimeType: 'application/json',
         responseSchema: taskSchema,
@@ -82,10 +191,20 @@ ${rawText}
     });
 
     const parsed = JSON.parse(response.text);
-    console.log(`✅ Gemini parsed ${parsed.length} task(s).`);
+
+    console.log(
+      `✅ Gemini parsed ${parsed.length} task(s).`
+    );
+
     return parsed;
   } catch (error) {
-    console.error('❌ Gemini Parsing Error:', error.message);
-    throw new Error('Failed to parse standup message via AI.');
+    console.error(
+      '❌ Gemini Parsing Error:',
+      error.message
+    );
+
+    throw new Error(
+      `Failed to parse standup message via AI: ${error.message}`
+    );
   }
 }
