@@ -29,7 +29,7 @@ slack-standup-backend/
 │   └── standupRoutes.js             # POST /api/standup
 ├── services/
 │   ├── slack.service.js             # Fetch + save + persist logic
-│   └── parserService.js             # Gemini AI parsing
+│   └── parser.service.js             # Gemini AI parsing
 ├── .env.example
 ├── package.json
 └── server.js

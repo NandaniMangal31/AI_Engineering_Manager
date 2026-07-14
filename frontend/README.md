@@ -41,7 +41,7 @@ import dashboardRoutes from './routes/dashboard.routes.js';
 app.use('/api/dashboard', dashboardRoutes);
 ```
 
-Everything else (Slack routes/controllers, `parserService.js`, `slack.service.js`) is untouched —
+Everything else (Slack routes/controllers, `parser.service.js`, `slack.service.js`) is untouched —
 they were already solid and the frontend uses them as-is.
 
 ## 3. What each page does
@@ -67,7 +67,7 @@ The screenshots you shared included a few things your current schema/backend doe
 with random numbers, I left them out of the Stand-up Summary page. If you want them for real,
 that's new backend work:
 - **Confidence score** — Gemini would need to also return a confidence value per task (extend
-  `taskSchema` in `parserService.js`), or you compute one from schema-required-field completeness.
+  `taskSchema` in `parser.service.js`), or you compute one from schema-required-field completeness.
 - **Duplicate detection** — a similarity check (e.g. embedding or fuzzy string match) between a
   new task's title and existing open tasks for the same team.
 - **Sentiment over week** — would need Gemini (or a separate lightweight classifier) to also
