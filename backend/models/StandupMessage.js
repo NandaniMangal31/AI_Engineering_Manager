@@ -57,35 +57,55 @@ const attachmentSchema = new mongoose.Schema(
   }
 );
 
-const standupMessageSchema = new mongoose.Schema({
-  standupId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Standup',
-    required: true,
-  },
+const standupMessageSchema = new mongoose.Schema(
+  {
+    standupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Standup',
+      required: true,
+    },
 
-  memberId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Member',
-    required: true,
-  },
+    memberId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Member',
+      required: true,
+    },
 
-  rawMessage: {
-    type: String,
-    default: '',
-  },
+    rawMessage: {
+      type: String,
+      default: '',
+    },
 
-  parsed: {
-    type: Boolean,
-    required: true,
-    default: false,
-  },
+    slackTimestamp: {
+      type: String,
+      default: null,
+      index: true,
+    },
 
-  attachments: {
-    type: [attachmentSchema],
-    default: [],
+    parsed: {
+      type: Boolean,
+      required: true,
+      default: false,
+    },
+
+    attachments: {
+      type: [attachmentSchema],
+      default: [],
+    },
   },
-});
+  {
+    timestamps: true,
+  }
+);
+
+// Prevent the same Slack message from being stored twice.
+standupMessageSchema.index(
+  { slackTimestamp: 1 },
+  {
+    unique: true,
+    sparse: true,
+  }
+);
 
 export default mongoose.model(
   'StandupMessage',
