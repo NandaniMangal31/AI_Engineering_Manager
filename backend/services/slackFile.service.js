@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { ensureSlackIntegrationSeed,selectSlackToken } from './slack.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,3 +204,20 @@ export async function cleanupTemporaryFiles(files = []) {
     )
   );
 }
+
+export const getSlackAccessToken = async () => {
+  const integration = await ensureSlackIntegrationSeed();
+
+  const token = selectSlackToken(
+    integration,
+    process.env.SLACK_BOT_TOKEN
+  );
+
+  if (!token) {
+    throw new Error(
+      'Slack is not connected. Please complete the OAuth flow at /api/slack/install'
+    );
+  }
+
+  return token;
+};

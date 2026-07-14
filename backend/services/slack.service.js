@@ -6,6 +6,12 @@ import Standup from '../models/Standup.js';
 import StandupMessage from '../models/StandupMessage.js';
 import Task from '../models/Task.js';
 import Activity from '../models/Activity.js';
+import {
+  downloadSlackAttachments,
+  cleanupTemporaryFiles,
+} from './slackFile.service.js';
+import {getSlackAccessToken} from './slackFile.service.js';
+
 
 export const selectSlackToken = (integration, botToken) => {
   return integration?.accessToken || botToken || null;
@@ -68,37 +74,114 @@ export const fetchChannelMessages = async (channelId, limit = 50) => {
     throw new Error(`Slack API error: ${result.error}`);
   }
 
-  // Filter out bot messages and system messages; keep only real user messages
-  const userMessages = result.messages.filter(
-    (m) => m.type === 'message' && !m.subtype && m.user
-  );
+  /*
+   * Keep only real user messages.
+   *
+   * Supported cases:
+   * 1. Text only
+   * 2. Text + image
+   * 3. Text + file
+   * 4. Image only
+   * 5. File only
+   */
+  const userMessages = result.messages.filter((msg) => {
+    const hasText =
+      typeof msg.text === 'string' &&
+      msg.text.trim() !== '';
 
-  // Resolve user info for each message (name, email)
+    const hasFiles =
+      Array.isArray(msg.files) &&
+      msg.files.length > 0;
+
+    return (
+      msg.type === 'message' &&
+      !msg.subtype &&
+      msg.user &&
+      (hasText || hasFiles)
+    );
+  });
+
+  // Resolve user info and attachment metadata for every message
   const enriched = await Promise.all(
     userMessages.map(async (msg) => {
       let userName = 'Unknown User';
       let email = null;
 
       try {
-        const userInfo = await client.users.info({ user: msg.user });
+        const userInfo = await client.users.info({
+          user: msg.user,
+        });
+
         if (userInfo.ok) {
           userName =
             userInfo.user.real_name ||
             userInfo.user.profile?.display_name ||
             userInfo.user.name ||
             'Unknown User';
-          email = userInfo.user.profile?.email || null;
+
+          email =
+            userInfo.user.profile?.email || null;
         }
       } catch (err) {
-        console.warn(`⚠️  Could not fetch user info for ${msg.user}:`, err.message);
+        console.warn(
+          `⚠️ Could not fetch user info for ${msg.user}:`,
+          err.message
+        );
       }
+
+      /*
+       * Extract only metadata here.
+       *
+       * We are NOT downloading anything yet.
+       * We are NOT saving anything to the temp folder yet.
+       * We are NOT sending attachments to Gemini yet.
+       */
+      const attachments = (msg.files || []).map((file) => ({
+        slackFileId: file.id,
+
+        fileName:
+          file.name || null,
+
+        title:
+          file.title || null,
+
+        mimeType:
+          file.mimetype || null,
+
+        fileType:
+          file.filetype || null,
+
+        size:
+          file.size || null,
+
+        urlPrivate:
+          file.url_private || null,
+
+        urlPrivateDownload:
+          file.url_private_download || null,
+
+        permalink:
+          file.permalink || null,
+
+        createdAt: file.created
+          ? new Date(file.created * 1000).toISOString()
+          : null,
+      }));
 
       return {
         slackUserId: msg.user,
+
         userName,
+
         email,
-        rawMessage: msg.text,
-        ts: msg.ts,
+
+        rawMessage:
+          msg.text || '',
+
+        ts:
+          msg.ts,
+
+        attachments,
       };
     })
   );
@@ -116,77 +199,147 @@ export async function processSlackData(slackPayload) {
   const { channel, messages } = slackPayload;
 
   if (!messages || messages.length === 0) {
-    return { success: true, processedCount: 0, aiReadyText: '' };
+    return {
+      success: true,
+      processedCount: 0,
+      aiReadyText: '',
+    };
   }
 
   // 1. Upsert the Team record using the Slack channel as the identifier
   const team = await Team.findOneAndUpdate(
-    { slackChannelId: channel.channelId },
+    {
+      slackChannelId: channel.channelId,
+    },
     {
       name: channel.channelName,
       slackChannelId: channel.channelId,
       slackChannelName: channel.channelName,
       isSlackConnected: true,
     },
-    { new: true, upsert: true }
+    {
+      returnDocument: 'after',
+      upsert: true,
+    }
   );
 
   const compiledAiText = [];
+  let processedCount = 0;
 
-  // 2. For each Slack message: upsert Member → create Standup → create StandupMessage
+  // 2. Process every Slack message
   for (const msg of messages) {
-    // Skip empty messages
-    if (!msg.rawMessage || msg.rawMessage.trim() === '') continue;
+    const hasText =
+      typeof msg.rawMessage === 'string' &&
+      msg.rawMessage.trim() !== '';
 
-    // Find or create the member by their Slack user ID
-    let member = await Member.findOne({ slackUserId: msg.slackUserId });
+    const hasAttachments =
+      Array.isArray(msg.attachments) &&
+      msg.attachments.length > 0;
+
+    // Skip only when message has neither text nor attachments
+    if (!hasText && !hasAttachments) {
+      continue;
+    }
+
+    // ─────────────────────────────────────────
+    // TEMPORARILY DOWNLOAD SLACK ATTACHMENTS
+    // ─────────────────────────────────────────
+
+    let downloadedFiles = [];
+
+    if (hasAttachments) {
+      const slackToken = await getSlackAccessToken();
+
+      downloadedFiles = await downloadSlackAttachments(
+        msg.attachments,
+        slackToken
+      );
+
+      console.log(
+        '📎 Downloaded Slack files:',
+        downloadedFiles
+      );
+    }
+
+    // Find or create member by Slack user ID
+    let member = await Member.findOne({
+      slackUserId: msg.slackUserId,
+    });
 
     if (!member) {
-      // Slack doesn't always expose email; use a placeholder so required field is satisfied
-      const safeEmail = msg.email || `${msg.slackUserId}@slack.placeholder`;
+      const safeEmail =
+        msg.email ||
+        `${msg.slackUserId}@slack.placeholder`;
 
       member = await Member.create({
         name: msg.userName || 'Unknown User',
         email: safeEmail,
         slackUserId: msg.slackUserId,
-        role: 'Developer',          // Default role — can be updated later via the member API
+        role: 'Developer',
         teamId: team._id,
         isActive: true,
       });
 
-      console.log(`👤 Created new member: ${member.name} (${member.slackUserId})`);
+      console.log(
+        `👤 Created new member: ${member.name} (${member.slackUserId})`
+      );
     } else if (!member.teamId) {
-      // Existing member not yet linked to a team → link now
       member.teamId = team._id;
       await member.save();
     }
 
-    // Create the parent Standup record
+    const rawMessage = hasText
+      ? msg.rawMessage.trim()
+      : '';
+
+    // 3. Create parent Standup record
     const standup = await Standup.create({
       submittedBy: member._id,
       source: 'Slack',
       parsingStatus: 'Pending',
-      message: msg.rawMessage,
+      message: rawMessage,
       parsed: false,
     });
 
-    // Create the child StandupMessage record
+    // 4. Create child StandupMessage with attachment metadata
     await StandupMessage.create({
       standupId: standup._id,
       memberId: member._id,
-      rawMessage: msg.rawMessage,
+      rawMessage,
+      attachments: msg.attachments || [],
       parsed: false,
     });
 
-    // Build the AI-readable string for this message
-    compiledAiText.push(`Member: ${member.name}\nMessage: ${msg.rawMessage}\n---`);
+    // 5. Build AI-readable text
+    let aiMessage = `Member: ${member.name}\n`;
+
+    if (hasText) {
+      aiMessage += `Message: ${rawMessage}\n`;
+    }
+
+    if (hasAttachments) {
+      aiMessage += 'Attachments:\n';
+
+      for (const attachment of msg.attachments) {
+        aiMessage +=
+          `- File Name: ${attachment.fileName || 'Unknown file'}\n` +
+          `  MIME Type: ${attachment.mimeType || 'Unknown'}\n` +
+          `  File Type: ${attachment.fileType || 'Unknown'}\n`;
+      }
+    }
+
+    aiMessage += '---';
+
+    compiledAiText.push(aiMessage);
+
+    processedCount++;
   }
 
   const aiFormattedString = compiledAiText.join('\n');
 
   return {
     success: true,
-    processedCount: messages.length,
+    processedCount,
     aiReadyText: aiFormattedString,
     teamId: team._id,
   };
