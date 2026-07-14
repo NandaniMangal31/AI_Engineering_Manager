@@ -2,7 +2,7 @@ import Member from "../models/Member.js";
 import Task from "../models/Task.js";
 import Standup from "../models/Standup.js";
 import StandupMessage from "../models/StandupMessage.js";
-import { parseStandupMessage } from "../services/parserService.js";
+import { parseStandupMessage } from "../services/parser.service.js";
 
 // POST /api/standups
 // Manual stand-up paste from the dashboard.
