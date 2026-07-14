@@ -7,8 +7,11 @@ import {
   joinChannel,
 } from '../controllers/slack.controller.js';
 import { processSlackData, fetchChannelMessages, saveParsedTasksToDatabase } from '../services/slack.service.js';
-import { parseStandupMessage } from '../services/parserService.js';
+import { parseStandupMessage } from '../services/parser.service.js';
 import { getSlackClient } from '../services/slack.service.js';
+import {
+  runFullPipeline
+} from '../services/slack.service.js';
 
 const router = express.Router();
 
@@ -47,59 +50,27 @@ router.post('/channels/:channelId/process', async (req, res) => {
     const { channelId } = req.params;
     const limit = parseInt(req.query.limit) || 50;
 
-    // Step 1: Fetch messages from Slack
-    console.log(`📥 Fetching up to ${limit} messages from channel ${channelId}...`);
-    const rawMessages = await fetchChannelMessages(channelId, limit);
+    console.log(
+      `🚀 Starting full Slack pipeline for channel ${channelId}...`
+    );
 
-    if (rawMessages.length === 0) {
-      return res.status(200).json({
-        message: 'No messages found in channel.',
-        processedCount: 0,
-        tasks: [],
-      });
-    }
-
-    // Get channel info for the Team record
-    const client = await getSlackClient();
-    const chanInfo = await client.conversations.info({ channel: channelId });
-    const channelName = chanInfo.ok ? chanInfo.channel.name : channelId;
-
-    // Step 2: Save raw data to MongoDB
-    console.log(`💾 Saving ${rawMessages.length} message(s) to MongoDB...`);
-    const slackPayload = {
-      channel: { channelId, channelName },
-      messages: rawMessages,
-    };
-    const { aiReadyText, processedCount } = await processSlackData(slackPayload);
-
-    if (!aiReadyText) {
-      return res.status(200).json({
-        message: 'Messages saved but no text to parse.',
-        processedCount,
-        tasks: [],
-      });
-    }
-
-    // Step 3: AI Parsing
-    console.log('🤖 Sending to Gemini for parsing...');
-    const parsedTasks = await parseStandupMessage(aiReadyText);
-
-    // Step 4: Save tasks to MongoDB
-    console.log(`📝 Saving ${parsedTasks.length} task(s) to MongoDB...`);
-    const savedTasks = await saveParsedTasksToDatabase(parsedTasks);
-
-    res.status(200).json({
-      message: 'Slack standup pipeline completed successfully.',
+    const result = await runFullPipeline(
       channelId,
-      channelName,
-      processedCount,
-      parsedTaskCount: parsedTasks.length,
-      savedTaskCount: savedTasks.length,
-      tasks: savedTasks,
-    });
+      limit
+    );
+
+    return res.status(200).json(result);
+
   } catch (error) {
-    console.error('❌ Pipeline error:', error.message);
-    res.status(500).json({ error: error.message });
+    console.error(
+      '❌ Pipeline error:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
 
