@@ -2,7 +2,7 @@ import Member from "../models/Member.js";
 import Task from "../models/Task.js";
 import Standup from "../models/Standup.js";
 import StandupMessage from "../models/StandupMessage.js";
-import { parseStandupMessage } from "../services/parser.service.js";
+import { inngest } from "../inngest/client.js";
 
 // POST /api/standups
 // Manual stand-up paste from the dashboard.
@@ -13,136 +13,138 @@ import { parseStandupMessage } from "../services/parser.service.js";
 // never showed up next to Slack-sourced ones anywhere in the app. This now
 // uses the same Standup + StandupMessage models as the Slack pipeline, with
 // source: 'Manual', exactly as the schema's `source` enum intends.
+
+
 export const processStandup = async (req, res) => {
     try {
         const { rawText, memberId } = req.body;
 
-        if (!rawText || rawText.trim() === "") {
-            return res.status(400).json({ error: "rawText is required." });
+        // =====================================================
+        // Validate Request
+        // =====================================================
+
+        if (!rawText || !rawText.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "rawText is required.",
+            });
         }
 
-        // A manual paste isn't tied to one speaker the way a Slack message is,
-        // but the schema requires submittedBy. Fall back to a generic
-        // "dashboard" submitter reference if none was supplied.
-        let submitter = null;
+        // =====================================================
+        // Resolve Member (optional)
+        // =====================================================
+
+        let member = null;
+
         if (memberId) {
-            submitter = await Member.findById(memberId);
+            member = await Member.findById(memberId);
+
+            if (!member) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Member not found.",
+                });
+            }
         }
 
-        const standupRecord = await Standup.create({
-            submittedBy: submitter ? submitter._id : null,
+        // =====================================================
+        // Create Standup
+        // =====================================================
+
+        const standup = await Standup.create({
+            submittedBy: member?._id ?? null,
             source: "Manual",
-            parsingStatus: "Processing",
             message: rawText,
+            parsingStatus: "Processing",
             parsed: false,
         });
 
-        // Step 2: Parser runs
-        const parsedTasks = await parseStandupMessage(rawText);
+        // =====================================================
+        // Create Standup Message
+        // =====================================================
 
-        if (!parsedTasks || parsedTasks.length === 0) {
-            await Standup.findByIdAndUpdate(standupRecord._id, { parsingStatus: "Failed" });
-            return res.status(400).json({ error: "Invalid stand-up: No tasks could be extracted." });
-        }
-
-        const createdTasks = [];
-
-        // Step 3: Process tasks and create members dynamically
-        const seen = new Set();
-
-        const uniqueTasks = parsedTasks.filter((task) => {
-            const key = `${(task.owner || "").trim().toLowerCase()}-${(task.taskName || "").trim().toLowerCase()}`;
-
-            if (seen.has(key)) {
-                return false;
-            }
-
-            seen.add(key);
-            return true;
+        const standupMessage = await StandupMessage.create({
+            standupId: standup._id,
+            memberId: member?._id ?? null,
+            rawMessage: rawText,
+            parsed: false,
         });
 
-        // Process only unique tasks
-        for (const pt of uniqueTasks) {
+        // =====================================================
+        // Queue AI Processing
+        // =====================================================
 
-            let memberName = pt.owner;
+        await inngest.send({
+            name: "standup/process",
+            data: {
+                source: "MANUAL",
 
-            if (!memberName || memberName.trim() === "") {
-                memberName = "Unknown";
-            }
+                workspace: {
+                    teamId: null,
+                    workspaceId: null,
+                    workspaceName: "Manual",
+                },
 
-            let member = await Member.findOne({
-                name: new RegExp(`^${memberName}$`, "i")
-            });
+                channel: {
+                    channelId: null,
+                    channelName: "Manual",
+                },
 
-            if (!member) {
-                member = await Member.create({
-                    name: memberName,
-                    email: `${memberName.toLowerCase().replace(/\s+/g, ".")}@placeholder.slack`,
-                    role: "Developer",
-                    isActive: true,
-                });
-            }
-
-            // Avoid creating duplicate StandupMessage
-            const existingMessage = await StandupMessage.findOne({
-                standupId: standupRecord._id,
-                memberId: member._id,
-                rawMessage: rawText,
-            });
-
-            if (!existingMessage) {
-                await StandupMessage.create({
-                    standupId: standupRecord._id,
-                    memberId: member._id,
-                    rawMessage: rawText,
-                    parsed: true,
-                });
-            }
-
-            if (pt.taskName && pt.taskName.trim() !== "") {
-
-                const task = await Task.findOneAndUpdate(
+                messages: [
                     {
-                        standupId: standupRecord._id,
-                        memberId: member._id,
-                        title: pt.taskName.trim(),
+                        standupId: standup._id,
+
+                        standupMessageId:
+                            standupMessage._id,
+
+                        member: member
+                            ? {
+                                  memberId: member._id,
+                                  name: member.name,
+                                  email: member.email,
+                                  role: member.role,
+                              }
+                            : {
+                                  memberId: null,
+                                  name: "Unknown",
+                                  email: null,
+                                  role: "Developer",
+                              },
+
+                        rawMessage: rawText,
+
+                        downloadedFiles: [],
+
+                        attachments: [],
                     },
-                    {
-                        $set: {
-                            description: pt.blockerDescription || null,
-                            status:
-                                pt.status === "COMPLETED"
-                                    ? "COMPLETED"
-                                    : pt.status === "BLOCKED"
-                                        ? "BLOCKED"
-                                        : "PROCESSING",
-                            priority: pt.priority || "Medium",
-                            workflowStage: pt.workflowStage || "DEVELOPMENT",
-                        },
-                    },
-                    {
-                        upsert: true,
-                        new: true,
-                        setDefaultsOnInsert: true,
-                    }
-                );
-
-                createdTasks.push(task);
-            }
-        }
-
-        await Standup.findByIdAndUpdate(standupRecord._id, { parsingStatus: "Completed", parsed: true });
-
-        res.status(201).json({
-            message: "Standup processed successfully",
-            standupId: standupRecord._id,
-            tasksAdded: createdTasks.length,
-            tasks: createdTasks,
+                ],
+            },
         });
 
+        // =====================================================
+        // Response
+        // =====================================================
+
+        return res.status(202).json({
+            success: true,
+            message:
+                "Standup queued for AI processing.",
+            standupId: standup._id,
+            standupMessageId:
+                standupMessage._id,
+        });
     } catch (error) {
-        console.error("Parsing Error:", error);
-        res.status(500).json({ error: "Failed to process stand-up." });
+        console.error(
+            "❌ Manual standup processing failed:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to process standup.",
+            error: error.message,
+        });
     }
 };
 

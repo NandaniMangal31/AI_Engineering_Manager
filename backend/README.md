@@ -189,12 +189,7 @@ fetchChannelMessages()       ← Resolves user names + emails via Slack API
      │
      ▼
 processSlackData()           ← Upserts Team, Member, Standup, StandupMessage in MongoDB
-     │
-     ▼
-parseStandupMessage()        ← Sends formatted text to Gemini 2.5 Flash
-     │
-     ▼
-saveParsedTasksToDatabase()  ← Creates Task + Activity records in MongoDB
+
 ```
 
 ---

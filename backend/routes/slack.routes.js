@@ -1,4 +1,5 @@
 import express from 'express';
+import { inngest } from "../inngest/client.js";
 import {
   installSlack,
   slackOAuthCallback,
@@ -6,8 +7,7 @@ import {
   getChannelMessages,
   joinChannel,
 } from '../controllers/slack.controller.js';
-import { processSlackData, fetchChannelMessages, saveParsedTasksToDatabase } from '../services/slack.service.js';
-import { parseStandupMessage } from '../services/parser.service.js';
+import { processSlackData, fetchChannelMessages } from '../services/slack.service.js';
 import { getSlackClient } from '../services/slack.service.js';
 import {
   runFullPipeline
@@ -83,44 +83,96 @@ router.post('/channels/:channelId/process', async (req, res) => {
  *
  * For testing, you can POST the same JSON manually.
  */
-router.post('/webhook', async (req, res) => {
-  try {
-    // Slack sends a URL verification challenge on first setup
-    if (req.body.type === 'url_verification') {
-      return res.status(200).json({ challenge: req.body.challenge });
+router.post("/webhook", async (req, res) => {
+    try {
+        // =====================================================
+        // Slack URL Verification
+        // =====================================================
+
+        if (req.body.type === "url_verification") {
+            return res.status(200).json({
+                challenge: req.body.challenge,
+            });
+        }
+
+        const { channel, messages } = req.body;
+
+        if (!channel || !Array.isArray(messages)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    'Request body must include "channel" and "messages".',
+            });
+        }
+
+        // =====================================================
+        // Store Slack Data
+        // =====================================================
+
+        const processed = await processSlackData({
+            channel,
+            messages,
+        });
+
+        // =====================================================
+        // Queue AI Processing
+        // =====================================================
+
+        if (processed.aiReadyMessages.length > 0) {
+            await inngest.send({
+                name: "standup/process",
+
+                data: {
+                    source: "SLACK",
+
+                    workspace: {
+                        teamId: processed.teamId,
+                    },
+
+                    channel,
+
+                    messages:
+                        processed.aiReadyMessages,
+                },
+            });
+        }
+
+        // =====================================================
+        // Response
+        // =====================================================
+
+        return res.status(202).json({
+            success: true,
+
+            message:
+                "Slack messages queued for AI processing.",
+
+            processedCount:
+                processed.processedCount,
+
+            skippedExistingCount:
+                processed.skippedExistingCount,
+
+            queuedForAI:
+                processed.aiReadyMessages.length,
+
+            teamId:
+                processed.teamId,
+        });
+    } catch (error) {
+        console.error(
+            "❌ Slack webhook error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to process Slack webhook.",
+            error: error.message,
+        });
     }
-
-    const { channel, messages } = req.body;
-
-    if (!channel || !messages) {
-      return res.status(400).json({
-        error: 'Request body must include "channel" and "messages" fields.',
-      });
-    }
-
-    // Step 1: Save to MongoDB
-    const result = await processSlackData({ channel, messages });
-
-    if (!result.aiReadyText) {
-      return res.status(200).json({ message: 'No parseable messages found.', tasks: [] });
-    }
-
-    // Step 2: AI Parse
-    const parsedTasks = await parseStandupMessage(result.aiReadyText);
-
-    // Step 3: Save tasks
-    const savedTasks = await saveParsedTasksToDatabase(parsedTasks);
-
-    res.status(200).json({
-      message: 'Webhook processed successfully.',
-      processedCount: result.processedCount,
-      savedTaskCount: savedTasks.length,
-      tasks: savedTasks,
-    });
-  } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    res.status(500).json({ error: error.message });
-  }
 });
+
 
 export default router;

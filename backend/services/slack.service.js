@@ -1,4 +1,5 @@
 import { WebClient } from '@slack/web-api';
+import {inngest} from '../inngest/client.js'
 import SlackIntegration from '../models/slackIntegration.model.js';
 import Team from '../models/Team.js';
 import Member from '../models/Member.js';
@@ -11,7 +12,7 @@ import {
   cleanupTemporaryFiles,
   getSlackAccessToken
 } from './slackFile.service.js';
-import { parseStandupMessage } from './parser.service.js';
+
 
 
 export const selectSlackToken = (integration, botToken) => {
@@ -613,198 +614,6 @@ export async function processSlackData(slackPayload) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// saveParsedTasksToDatabase
-// Takes the AI output array and persists each task to the Task collection,
-// linked to the correct Member and Standup. Also logs an Activity record.
-// ─────────────────────────────────────────────────────────────────────────────
-export async function saveParsedTasksToDatabase(
-  parsedTasks,
-  messageContext
-) {
-  const savedTasks = [];
-
-  if (!Array.isArray(parsedTasks) || parsedTasks.length === 0) {
-    console.log('ℹ️ No parsed tasks to save.');
-
-    return savedTasks;
-  }
-
-  if (!messageContext) {
-    throw new Error(
-      'Message context is required to save parsed tasks.'
-    );
-  }
-
-  const {
-    member,
-    standupId,
-    standupMessageId,
-  } = messageContext;
-
-  if (!member?.memberId) {
-    throw new Error(
-      'memberId is missing from message context.'
-    );
-  }
-
-  if (!standupId) {
-    throw new Error(
-      'standupId is missing from message context.'
-    );
-  }
-
-  if (!standupMessageId) {
-    throw new Error(
-      'standupMessageId is missing from message context.'
-    );
-  }
-
-  console.log(
-    `💾 Saving ${parsedTasks.length} parsed task(s) for ${member.name}`
-  );
-
-  for (const taskData of parsedTasks) {
-    try {
-      // Ignore empty task titles
-      if (
-        !taskData.taskName ||
-        taskData.taskName.trim() === ''
-      ) {
-        console.warn(
-          '⚠️ Skipping task because taskName is empty.'
-        );
-
-        continue;
-      }
-
-      const title = taskData.taskName.trim();
-
-      const status = normalizeStatus(
-        taskData.status
-      );
-
-      const priority = normalizePriority(
-        taskData.priority
-      );
-
-      const workflowStage =
-        normalizeWorkflowStage(
-          taskData.workflowStage
-        );
-
-      /*
-       * Prevent duplicate tasks for the exact same:
-       *
-       * Member
-       * Standup
-       * Task title
-       */
-      const existingTask = await Task.findOne({
-        memberId: member.memberId,
-        standupId,
-        title: {
-          $regex: new RegExp(
-            `^${escapeRegex(title)}$`,
-            'i'
-          ),
-        },
-      });
-
-      if (existingTask) {
-        console.log(
-          `⏭️ Duplicate task skipped: "${title}"`
-        );
-
-        savedTasks.push(existingTask);
-
-        continue;
-      }
-
-      // Create exact task relationship
-      const task = await Task.create({
-        memberId: member.memberId,
-        standupId,
-        title,
-
-        description:
-          taskData.blockerDescription || null,
-
-        status,
-
-        workflowStage,
-
-        priority,
-      });
-
-      // Log AI activity
-      await Activity.create({
-        taskId: task._id,
-
-        actorType: 'AI_AGENT',
-
-        actorId: 'gemini-standup-parser',
-
-        activityType: 'STATUS_CHANGE',
-
-        previousStatus: null,
-
-        currentStatus: status,
-
-        newValue: {
-          title: task.title,
-          priority,
-          workflowStage,
-        },
-
-        message:
-          'Task created from Slack message via Gemini AI parsing.',
-      });
-
-      savedTasks.push(task);
-
-      console.log(
-        `✅ Saved task: "${task.title}" for ${member.name}`
-      );
-    } catch (error) {
-      console.error(
-        `❌ Failed to save task "${taskData.taskName || 'Unknown'}":`,
-        error.message
-      );
-    }
-  }
-
-  /*
-   * Mark the exact StandupMessage as parsed.
-   *
-   * We no longer use:
-   *
-   * findOneAndUpdate({
-   *   standupId,
-   *   memberId
-   * })
-   *
-   * because we already know the exact StandupMessage ID.
-   */
-  await StandupMessage.findByIdAndUpdate(
-    standupMessageId,
-    {
-      parsed: true,
-    }
-  );
-
-  // Mark exact Standup as successfully parsed
-  await Standup.findByIdAndUpdate(
-    standupId,
-    {
-      parsingStatus: 'Completed',
-      parsed: true,
-    }
-  );
-
-  return savedTasks;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // runFullPipeline
 // Fetch Slack messages → save exact message contexts → parse each message
 // individually with Gemini → save tasks using exact Member/Standup/Message IDs
@@ -814,45 +623,44 @@ export async function runFullPipeline(
   channelId,
   limit = 50
 ) {
-  let allDownloadedFiles = [];
+  let downloadedFiles = [];
 
   try {
     console.log(
       `📥 Fetching up to ${limit} messages from Slack channel ${channelId}...`
     );
 
-    // ─────────────────────────────────────────
-    // 1. FETCH CHANNEL INFORMATION
-    // ─────────────────────────────────────────
+    // =====================================================
+    // 1. Get Slack Client
+    // =====================================================
 
     const client = await getSlackClient();
+
+    // =====================================================
+    // 2. Resolve Channel Name
+    // =====================================================
 
     let channelName = channelId;
 
     try {
-      const channelInfo =
+      const { ok, channel } =
         await client.conversations.info({
           channel: channelId,
         });
 
-      if (
-        channelInfo.ok &&
-        channelInfo.channel
-      ) {
+      if (ok && channel) {
         channelName =
-          channelInfo.channel.name ||
-          channelId;
+          channel.name || channelId;
       }
     } catch (error) {
       console.warn(
-        `⚠️ Could not fetch channel name for ${channelId}:`,
-        error.message
+        `⚠️ Failed to resolve channel name: ${error.message}`
       );
     }
 
-    // ─────────────────────────────────────────
-    // 2. FETCH SLACK MESSAGES
-    // ─────────────────────────────────────────
+    // =====================================================
+    // 3. Fetch Slack Messages
+    // =====================================================
 
     const messages =
       await fetchChannelMessages(
@@ -861,12 +669,12 @@ export async function runFullPipeline(
       );
 
     console.log(
-      `📨 Fetched ${messages.length} Slack message(s).`
+      `📨 Retrieved ${messages.length} Slack message(s).`
     );
 
-    // ─────────────────────────────────────────
-    // 3. PROCESS SLACK DATA
-    // ─────────────────────────────────────────
+    // =====================================================
+    // 4. Store Slack Data
+    // =====================================================
 
     const processed =
       await processSlackData({
@@ -878,352 +686,103 @@ export async function runFullPipeline(
         messages,
       });
 
-    console.log(
-      `📦 Prepared ${processed.aiReadyMessages.length} message(s) for AI parsing.`
-    );
+    // Track downloaded files for cleanup
+    for (const message of processed.aiReadyMessages) {
+      if (
+        Array.isArray(message.downloadedFiles)
+      ) {
+        downloadedFiles.push(
+          ...message.downloadedFiles
+        );
+      }
+    }
 
     console.log(
-      `♻️ Found ${processed.alreadyParsedMessages.length} already-parsed message(s) whose saved tasks can be reused.`
+      `📦 ${processed.aiReadyMessages.length} message(s) queued for AI processing.`
     );
 
-    // ─────────────────────────────────────────
-    // 4. PREPARE TASK COLLECTIONS
-    // ─────────────────────────────────────────
-
-    const allParsedTasks = [];
-
-    /*
-     * Contains only tasks newly created during
-     * this pipeline execution.
-     */
-    const newlySavedTasks = [];
-
-    /*
-     * Contains tasks retrieved from MongoDB
-     * for messages parsed previously.
-     */
-    const reusedTasks = [];
-
-    // ─────────────────────────────────────────
-    // 5. FETCH ALREADY-PARSED TASKS
-    // ─────────────────────────────────────────
+    // =====================================================
+    // 5. Trigger Inngest AI Pipeline
+    // =====================================================
 
     if (
-      Array.isArray(
-        processed.alreadyParsedMessages
-      ) &&
-      processed.alreadyParsedMessages.length > 0
+      processed.aiReadyMessages.length > 0
     ) {
-      const existingStandupIds =
-        processed.alreadyParsedMessages
-          .map(
-            (message) =>
-              message.standupId
-          )
-          .filter(Boolean);
+      await inngest.send({
+        name: "standup/process",
 
-      if (existingStandupIds.length > 0) {
-        const existingTasks =
-          await Task.find({
-            standupId: {
-              $in: existingStandupIds,
-            },
-          });
+        data: {
+          workspace: {
+            teamId: processed.teamId,
+          },
 
-        reusedTasks.push(
-          ...existingTasks
-        );
+          channel: {
+            channelId,
+            channelName,
+          },
 
-        console.log(
-          `♻️ Reused ${existingTasks.length} already-saved task(s) from MongoDB. No Gemini call required for them.`
-        );
-      }
+          messages:
+            processed.aiReadyMessages,
+
+          generatedAt:
+            new Date().toISOString(),
+        },
+      });
+
+      console.log(
+        `🚀 Sent ${processed.aiReadyMessages.length} message(s) to Inngest.`
+      );
     }
 
-    // ─────────────────────────────────────────
-    // 6. PARSE NEW OR FAILED MESSAGES
-    // ─────────────────────────────────────────
-
-    for (
-      const messageContext
-      of processed.aiReadyMessages
-    ) {
-      /*
-       * Track downloaded files so they can be
-       * deleted from temporary storage later.
-       */
-      if (
-        Array.isArray(
-          messageContext.downloadedFiles
-        ) &&
-        messageContext.downloadedFiles.length > 0
-      ) {
-        allDownloadedFiles.push(
-          ...messageContext.downloadedFiles
-        );
-      }
-
-      const aiText = `
-Member: ${messageContext.member.name}
-Message: ${messageContext.rawMessage || ''}
-      `.trim();
-
-      try {
-        console.log(
-          `🤖 Parsing Slack message from ${messageContext.member.name}`
-        );
-
-        const parsedTasks =
-          await parseStandupMessage(
-            aiText,
-
-            messageContext.downloadedFiles ||
-              []
-          );
-
-        console.log(
-          `✅ Gemini extracted ${parsedTasks.length} task(s) from message by ${messageContext.member.name}`
-        );
-
-        // ─────────────────────────────────────
-        // NO ACTIONABLE TASKS FOUND
-        // ─────────────────────────────────────
-
-        if (
-          !Array.isArray(parsedTasks) ||
-          parsedTasks.length === 0
-        ) {
-          await Standup.findByIdAndUpdate(
-            messageContext.standupId,
-            {
-              parsingStatus:
-                'Completed',
-
-              parsed:
-                true,
-            }
-          );
-
-          await StandupMessage.findByIdAndUpdate(
-            messageContext.standupMessageId,
-            {
-              parsed:
-                true,
-            }
-          );
-
-          console.log(
-            `ℹ️ No actionable tasks found in message from ${messageContext.member.name}`
-          );
-
-          continue;
-        }
-
-        // ─────────────────────────────────────
-        // SAVE NEWLY PARSED TASKS
-        // ─────────────────────────────────────
-
-        const savedTasks =
-          await saveParsedTasksToDatabase(
-            parsedTasks,
-            messageContext
-          );
-
-        allParsedTasks.push(
-          ...parsedTasks
-        );
-
-        newlySavedTasks.push(
-          ...savedTasks
-        );
-      } catch (error) {
-        console.error(
-          `❌ Failed to parse Slack message from ${messageContext.member.name}:`,
-          error.message
-        );
-
-        /*
-         * Only this exact message fails.
-         * Other Slack messages continue processing.
-         */
-
-        await Standup.findByIdAndUpdate(
-          messageContext.standupId,
-          {
-            parsingStatus:
-              'Failed',
-
-            parsed:
-              false,
-          }
-        );
-
-        await StandupMessage.findByIdAndUpdate(
-          messageContext.standupMessageId,
-          {
-            parsed:
-              false,
-          }
-        );
-      }
-    }
-
-    // ─────────────────────────────────────────
-    // 7. COMBINE NEW + REUSED TASKS
-    // ─────────────────────────────────────────
-
-    const allTasks = [
-      ...reusedTasks,
-      ...newlySavedTasks,
-    ];
-
-    console.log(
-      '📊 Pipeline summary:',
-      {
-        newMessagesProcessed:
-          processed.processedCount,
-
-        existingMessagesReused:
-          processed.skippedExistingCount,
-
-        newTasksParsed:
-          allParsedTasks.length,
-
-        newTasksSaved:
-          newlySavedTasks.length,
-
-        reusedTasks:
-          reusedTasks.length,
-
-        totalTasksReturned:
-          allTasks.length,
-      }
-    );
-
-    // ─────────────────────────────────────────
-    // 8. RETURN FRONTEND-COMPATIBLE RESPONSE
-    // ─────────────────────────────────────────
+    // =====================================================
+    // 6. Response
+    // =====================================================
 
     return {
+      success: true,
+
       message:
-        'Slack standup pipeline completed successfully.',
+        "Slack standup queued for AI processing.",
 
       channelId,
 
       channelName,
 
-      success:
-        true,
+      teamId:
+        processed.teamId,
 
-      /*
-       * Number of new or failed messages
-       * actually sent for AI processing.
-       */
       processedCount:
         processed.processedCount,
 
-      /*
-       * Number of successfully parsed messages
-       * reused without Gemini.
-       */
       skippedExistingCount:
         processed.skippedExistingCount,
 
-      /*
-       * Number of new tasks extracted by Gemini
-       * during this request.
-       */
-      parsedTaskCount:
-        allParsedTasks.length,
-
-      /*
-       * Number of tasks newly saved during
-       * this request.
-       */
-      newlySavedTaskCount:
-        newlySavedTasks.length,
-
-      /*
-       * Number of existing tasks reused from DB.
-       */
-      reusedTaskCount:
-        reusedTasks.length,
-
-      /*
-       * Total tasks returned to frontend.
-       */
-      totalTaskCount:
-        allTasks.length,
-
-      tasks:
-        allTasks,
-
-      teamId:
-        processed.teamId,
+      queuedForAI:
+        processed.aiReadyMessages.length,
     };
   } catch (error) {
     console.error(
-      '❌ FULL PIPELINE ERROR:',
+      "❌ Slack pipeline failed:",
       error
     );
 
     throw error;
   } finally {
-    // ─────────────────────────────────────────
-    // 9. CLEAN UP TEMPORARY DOWNLOADED FILES
-    // ─────────────────────────────────────────
-
-    if (
-      allDownloadedFiles.length > 0
-    ) {
+    if (downloadedFiles.length) {
       try {
         await cleanupTemporaryFiles(
-          allDownloadedFiles
+          downloadedFiles
         );
 
         console.log(
-          `🧹 Cleaned up ${allDownloadedFiles.length} temporary Slack file(s).`
+          `🧹 Cleaned ${downloadedFiles.length} temporary file(s).`
         );
       } catch (cleanupError) {
         console.error(
-          '❌ Temporary file cleanup failed:',
+          "❌ Failed to clean temporary files:",
           cleanupError.message
         );
       }
     }
   }
-}
-
-function escapeRegex(value = '') {
-  return value.replace(
-    /[.*+?^${}()|[\]\\]/g,
-    '\\$&'
-  );
-}
-
-// ─────────────────────────────────────────────
-// Normalisation helpers
-// ─────────────────────────────────────────────
-
-function normalizeStatus(raw = '') {
-  const s = raw.toUpperCase();
-  if (s === 'COMPLETED' || s === 'DONE' || s === 'FINISHED') return 'COMPLETED';
-  if (s === 'BLOCKED' || s === 'WAITING' || s === 'STUCK') return 'BLOCKED';
-  return 'PROCESSING';
-}
-
-function normalizePriority(raw = '') {
-  const p = (raw || '').toLowerCase();
-  if (p.includes('critical')) return 'Critical';
-  if (p.includes('high') || p.includes('urgent')) return 'High';
-  if (p.includes('low')) return 'Low';
-  return 'Medium';
-}
-
-function normalizeWorkflowStage(raw = '') {
-  const w = (raw || '').toUpperCase();
-  if (w === 'QA' || w.includes('TEST')) return 'QA';
-  if (w === 'REVIEW' || w.includes('PR') || w.includes('REVIEW')) return 'REVIEW';
-  if (w === 'PRODUCTION' || w.includes('PROD') || w.includes('DEPLOY')) return 'PRODUCTION';
-  return 'DEVELOPMENT';
 }
