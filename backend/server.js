@@ -9,7 +9,7 @@ import activityRoutes from "./routes/activity.routes.js";
 import standupRoutes from "./routes/standup.routes.js";
 import slackRoutes from "./routes/slack.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
-import categorizationRoutes from "./routes/categorization.routes.js"; // ← new
+
 
 dotenv.config();
 const app = express();
@@ -27,7 +27,7 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/standups", standupRoutes);
 app.use("/api/slack", slackRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/categorize", categorizationRoutes); // ← new
+
 
 mongoose
 	.connect(process.env.MONGO_URI)

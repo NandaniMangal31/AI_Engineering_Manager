@@ -1,6 +1,6 @@
 // routes/standup.routes.js
 import express from 'express';
-import * as standupController from '../controllers/standupController.js';
+import * as standupController from '../controllers/standup.controller.js';
 
 const router = express.Router();
 
